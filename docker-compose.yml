@@ -1,0 +1,55 @@
+volumes:
+  pg-data:
+  gradle-cache:
+
+services:
+  db:
+    image: postgres:14.8-alpine
+    container_name: db
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ./etc/postgres/initdb:/docker-entrypoint-initdb.d
+    expose:
+      - 5432
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_PASSWORD=$SPRING_DATASOURCE_PASSWORD
+      - POSTGRES_HOST_AUTH_METHOD=scram-sha-256
+      - POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256
+      - PGDATA=/var/lib/postgresql/data/pg-data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  builder:
+    image: gradle:8.11.1-jdk17-jammy
+    container_name: builder
+    working_dir: /app
+    volumes:
+      - .:/app   # Mount the current directory to `/app` in the container
+      - gradle-cache:/root/.gradle # Reuse Gradle cache for faster builds
+    command: gradle bootJar --stacktrace
+
+  app:
+    image: openjdk:17-jdk-slim # Use a lightweight OpenJDK image for running the app
+    container_name: app
+    working_dir: /app
+    volumes:
+      - .:/app   # Mount the current directory to `/app` in the container
+    expose:
+      - 8080
+    ports:
+      - "8080:8080"
+    command: java -jar build/libs/app.jar
+    restart: on-failure
+    env_file:
+      - .env
+    depends_on:
+      builder:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
